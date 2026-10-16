@@ -173,6 +173,9 @@ class Hist(Stat):
         weights = data.get("weight", None)
 
         density = self.stat == "density"
+        if density and weights is not None and not weights.any():
+            # np.histogram with density=True divides by zero total weight.
+            density = False
         hist, edges = np.histogram(vals, **bin_kws, weights=weights, density=density)
 
         width = np.diff(edges)
@@ -183,10 +186,15 @@ class Hist(Stat):
     def _normalize(self, data):
 
         hist = data["count"]
-        if self.stat == "probability" or self.stat == "proportion":
-            hist = hist.astype(float) / hist.sum()
-        elif self.stat == "percent":
-            hist = hist.astype(float) / hist.sum() * 100
+        if self.stat in ("probability", "proportion", "percent"):
+            # A group with all-zero weights has no probability mass.
+            # Dividing by the zero total would otherwise produce NaNs.
+            hist = hist.astype(float)
+            total = hist.sum()
+            if total != 0:
+                hist = hist / total
+            if self.stat == "percent":
+                hist *= 100
         elif self.stat == "frequency":
             hist = hist.astype(float) / data["space"]
 

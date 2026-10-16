@@ -2,6 +2,7 @@ import itertools
 import warnings
 
 import numpy as np
+import pandas as pd
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 from matplotlib.colors import to_rgb, to_rgba
@@ -405,6 +406,69 @@ class TestKDEPlotUnivariate(SharedAxesLevelTests):
 
         ax = kdeplot(x=[])
         assert not ax.lines
+
+    def test_singular_weights(self):
+
+        # gh-3817: the effective sample is singular even though x varies.
+        with pytest.warns(UserWarning, match="0 variance"):
+            ax = kdeplot(x=np.arange(5), weights=[0, 0, 3, 0, 0])
+        assert not ax.lines
+
+        # When at least two distinct values have nonzero weights the
+        # density estimate remains available.
+        ax = kdeplot(x=np.arange(5), weights=[0, 1, 0, 1, 0], color="C0")
+        assert len(ax.lines) == 1
+
+    @pytest.mark.parametrize(
+        "x, weights",
+        [
+            (np.arange(5), [0, 0, 0, 0, 0]),
+            (np.arange(5), [0, 1e-300, 1, 0, 0]),
+            ([0, 1, 1, 3, 4], [0, 1, 1, 0, 0]),
+        ],
+        ids=["zero_weight", "concentrated_weight", "single_support_value"],
+    )
+    def test_effectively_singular_weights(self, x, weights):
+
+        with pytest.warns(UserWarning, match="0 variance"):
+            ax = kdeplot(x=x, weights=weights, color="C0")
+        assert not ax.lines
+
+    def test_large_finite_weights_do_not_overflow_density(self):
+
+        fig, axes = plt.subplots(1, 2)
+        data = np.arange(4)
+        kdeplot(x=data, weights=[1e308, 1e308, 0, 0], ax=axes[0], color="C0")
+        kdeplot(x=data, weights=[1, 1, 0, 0], ax=axes[1], color="C0")
+
+        assert len(axes[0].lines) == 1
+        assert len(axes[1].lines) == 1
+        np.testing.assert_allclose(
+            axes[0].lines[0].get_xydata(),
+            axes[1].lines[0].get_xydata(),
+            rtol=1e-12,
+        )
+
+    def test_large_finite_weights_preserve_hue_common_normalization(self):
+
+        df = pd.DataFrame({
+            "x": np.arange(6),
+            "weight": [1e308] * 6,
+            "group": ["a"] * 3 + ["b"] * 3,
+        })
+        ax = kdeplot(
+            data=df, x="x", weights="weight", hue="group",
+            common_norm=True, palette=["C0", "C1"],
+        )
+
+        assert len(ax.lines) == 2
+        for line in ax.lines:
+            assert np.isfinite(line.get_xydata()).all()
+
+    def test_negative_weights_still_raise(self):
+
+        with pytest.raises(ValueError):
+            kdeplot(x=np.arange(5), weights=[0, -1, 1, 0, 0])
 
     def test_singular_data(self):
 
@@ -1577,6 +1641,125 @@ class TestHistPlotUnivariate(SharedAxesLevelTests):
         lw = 5
         ax = histplot(flat_series, kde=True, line_kws=dict(lw=lw))
         assert ax.lines[0].get_linewidth() == lw
+
+    @pytest.mark.parametrize("stat", ["density", "probability", "percent"])
+    @pytest.mark.parametrize("with_hue", [False, True])
+    def test_kde_large_weights_normalized_histogram(self, stat, with_hue):
+
+        # Regression: the KDE normalizes huge finite weights, but histogram
+        # bin accumulation must also avoid overflow and preserve hue shares.
+        data = pd.DataFrame({
+            "x": np.arange(6),
+            "weight": [1e308] * 6,
+            "group": ["a"] * 3 + ["b"] * 3,
+        })
+        fig, axes = plt.subplots(1, 2)
+        kws = {
+            "x": "x", "weights": "weight", "stat": stat,
+            "bins": 3, "kde": True, "color": "C0",
+        }
+        if with_hue:
+            kws["hue"] = "group"
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", RuntimeWarning)
+            large_ax = histplot(data=data, ax=axes[0], **kws)
+            small_ax = histplot(
+                data=data.assign(weight=1.0), ax=axes[1], **kws
+            )
+
+        large_heights = np.array([patch.get_height() for patch in large_ax.patches])
+        small_heights = np.array([patch.get_height() for patch in small_ax.patches])
+        assert np.isfinite(large_heights).all()
+        np.testing.assert_allclose(large_heights, small_heights)
+        assert len(large_ax.lines) == len(small_ax.lines) == (2 if with_hue else 1)
+        for large_line, small_line in zip(large_ax.lines, small_ax.lines):
+            assert np.isfinite(large_line.get_xydata()).all()
+            np.testing.assert_allclose(
+                large_line.get_xydata(), small_line.get_xydata(), rtol=1e-12
+            )
+
+    @pytest.mark.parametrize(
+        "stat", ["density", "probability", "proportion", "percent"]
+    )
+    @pytest.mark.parametrize(
+        "weights, with_hue, expected_lines",
+        [
+            ([0, 0, 0, 1, 1, 1], True, 1),
+            ([0, 0, 0, 0, 0, 0], True, 0),
+            ([0, 0, 0, 0, 0, 0], False, 0),
+        ],
+        ids=["zero_mass_hue_group", "all_zero_hue_groups", "all_zero_no_hue"],
+    )
+    def test_histplot_kde_zero_mass_weighted_groups(
+        self, stat, weights, with_hue, expected_lines,
+    ):
+
+        df = pd.DataFrame({
+            "x": np.arange(6),
+            "weight": weights,
+            "group": ["a"] * 3 + ["b"] * 3,
+        })
+        kwargs = dict(data=df, x="x", weights="weight", stat=stat,
+                      kde=True, bins=3, color="C0")
+        if with_hue:
+            kwargs["hue"] = "group"
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", RuntimeWarning)
+            ax = histplot(**kwargs)
+
+        assert ax.patches
+        assert np.isfinite([patch.get_height() for patch in ax.patches]).all()
+        assert len(ax.lines) == expected_lines
+
+    @pytest.mark.parametrize(
+        "stat, factor",
+        [("probability", 1), ("proportion", 1), ("percent", 100)],
+    )
+    def test_negative_weight_histogram_normalization(self, stat, factor):
+
+        # Preserve existing behavior when the total histogram weight is
+        # negative: only a zero total should bypass normalization.
+        ax = histplot(
+            x=[0, 1], weights=[-2.0, -1.0], bins=[-.5, .5, 1.5],
+            stat=stat, color="C0",
+        )
+        np.testing.assert_allclose(
+            [patch.get_height() for patch in ax.patches],
+            np.array([2 / 3, 1 / 3]) * factor,
+        )
+
+    def test_kde_singular_weights(self):
+
+        # The histogram is still meaningful when scipy cannot fit a KDE
+        # because all the nonzero weight lies on a single observation.
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            ax = histplot(
+                x=np.arange(5), weights=[0, 0, 3, 0, 0], kde=True, bins=5,
+                color="C0",
+            )
+        assert ax.patches
+        assert not ax.lines
+
+    @pytest.mark.parametrize(
+        "weights",
+        [
+            [0, 0, 0, 0, 0],
+            [0, 1e-300, 1, 0, 0],
+        ],
+        ids=["zero_weight", "concentrated_weight"],
+    )
+    def test_histplot_kde_with_effectively_singular_weights(self, weights):
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            ax = histplot(
+                x=np.arange(5), weights=weights, kde=True, bins=5, color="C0",
+            )
+        assert ax.patches
+        assert not ax.lines
 
     def test_kde_singular_data(self):
 
