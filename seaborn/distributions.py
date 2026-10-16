@@ -109,6 +109,58 @@ class _DistributionPlotter(VectorPlotter):
 
         super().__init__(data=data, variables=variables)
 
+    def _coerce_mixed_hist_categories(self):
+        """Make mixed text/numeric histogram categories compatible with matplotlib.
+
+        Mixed strings and numbers may be stored in object or pandas
+        Categorical columns. Matplotlib's category converter cannot consume
+        the heterogeneous values, so convert the histogram axis data to
+        string categories before attaching the plotter. Missing values stay
+        missing, and conversion must preserve distinct category identities.
+        """
+        for var in ("x", "y"):
+            values = self.plot_data.get(var)
+            if (
+                values is None
+                or self.var_types.get(var) != "categorical"
+                or not (
+                    pd.api.types.is_object_dtype(values)
+                    or isinstance(values.dtype, pd.CategoricalDtype)
+                )
+            ):
+                continue
+
+            observed = values.dropna()
+            has_text = observed.map(lambda value: isinstance(value, str)).any()
+            has_numeric = observed.map(lambda value: isinstance(value, Number)).any()
+            if has_text and has_numeric:
+                converted = values.astype("string")
+                # String conversion can merge distinct values such as 1 and
+                # "1", or separate equal numeric values such as 1 and 1.0.
+                # Comparing unique counts alone misses cases where a merge
+                # and a split cancel out (e.g. [1, 1.0, "1"]).
+                # Instead compare the equality partitions in observation order.
+                original_groups = pd.factorize(observed, sort=False)[0]
+                converted_groups = pd.factorize(converted.dropna(), sort=False)[0]
+                if not np.array_equal(original_groups, converted_groups):
+                    raise ValueError(
+                        "Mixed numeric/text histogram categories cannot be "
+                        "converted without changing distinct category values. "
+                        "Convert the input to unique string labels first."
+                    )
+                if isinstance(values.dtype, pd.CategoricalDtype):
+                    # Keep the declared category order, including unused levels.
+                    categories = values.cat.categories
+                    string_labels = [str(category) for category in categories]
+                    if len(string_labels) != len(set(string_labels)):
+                        raise ValueError(
+                            "Mixed numeric/text histogram categories cannot be "
+                            "converted without changing distinct category values. "
+                            "Convert the input to unique string labels first."
+                        )
+                    converted = values.cat.rename_categories(str)
+                self.plot_data[var] = converted
+
     @property
     def univariate(self):
         """Return True if only x or y are used."""
@@ -1381,6 +1433,7 @@ def histplot(
         data=data,
         variables=dict(x=x, y=y, hue=hue, weights=weights),
     )
+    p._coerce_mixed_hist_categories()
 
     p.map_hue(palette=palette, order=hue_order, norm=hue_norm)
 
@@ -2114,6 +2167,8 @@ def displot(
     p.map_hue(palette=palette, order=hue_order, norm=hue_norm)
 
     _check_argument("kind", ["hist", "kde", "ecdf"], kind)
+    if kind == "hist":
+        p._coerce_mixed_hist_categories()
 
     # --- Initialize the FacetGrid object
 
