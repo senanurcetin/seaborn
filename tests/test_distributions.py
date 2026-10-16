@@ -2,6 +2,7 @@ import itertools
 import warnings
 
 import numpy as np
+import pandas as pd
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 from matplotlib.colors import to_rgb, to_rgba
@@ -1130,6 +1131,116 @@ class TestHistPlotUnivariate(SharedAxesLevelTests):
 
     func = staticmethod(histplot)
 
+    @pytest.mark.parametrize("orient", ["x", "y"])
+    @pytest.mark.parametrize("values", [
+        [0, 1, "a", "b"],
+        ["a", 0, "b", 1],
+        [0, 1, "a", None],
+    ])
+    def test_mixed_numeric_and_text_categories(self, orient, values):
+
+        # gh-3846: matplotlib cannot convert categorical axes containing
+        # both numeric and text values unless they share a representation.
+        df = pd.DataFrame({
+            "mixed": values,
+            "group": ["left", "right", "left", "right"],
+        })
+        original = df.copy(deep=True)
+        ax = histplot(data=df, hue="group", **{orient: "mixed"})
+
+        labels = (ax.get_xticklabels() if orient == "x"
+                  else ax.get_yticklabels())
+        assert [label.get_text() for label in labels] == [
+            str(value) for value in values if value is not None
+        ]
+        assert len(ax.patches) == 2 * len(set(map(str, values)) - {"None"})
+        pd.testing.assert_frame_equal(df, original)
+
+    @pytest.mark.parametrize("orient", ["x", "y"])
+    @pytest.mark.parametrize(
+        "values",
+        [
+            [1, "1", "other"],
+            [1.0, "1.0", "other"],
+            [1, 1.0, "other"],
+            # Equal unique counts can hide both a merge and a split.
+            [1, 1.0, "1"],
+            [0, 0.0, "0"],
+        ],
+    )
+    def test_mixed_category_conversion_rejects_collisions(self, orient, values):
+
+        # Numeric and text labels must not be silently merged or split.
+        with pytest.raises(ValueError, match="changing distinct category"):
+            histplot(**{orient: values})
+
+    @pytest.mark.parametrize("orient", ["x", "y"])
+    def test_mixed_pandas_categorical_histogram(self, orient):
+
+        # Mixed numeric/text labels can also arrive as pandas Categorical,
+        # not only as an object-typed Series (gh-3846).
+        values = pd.Series(pd.Categorical([0, "a", 1, "b"]))
+        original = values.copy(deep=True)
+        # Inferred categorical levels may differ from observation order.
+        # Histograms must preserve the dtype's actual category order.
+        expected_levels = [str(level) for level in values.cat.categories]
+        ax = histplot(**{orient: values}, color="C0")
+
+        ticklabels = ax.get_xticklabels() if orient == "x" else ax.get_yticklabels()
+        assert [tick.get_text() for tick in ticklabels] == expected_levels
+        pd.testing.assert_series_equal(values, original)
+
+    @pytest.mark.parametrize("orient", ["x", "y"])
+    @pytest.mark.parametrize("ordered", [True, False])
+    def test_mixed_pandas_categorical_preserves_category_order(self, orient, ordered):
+
+        # The original categorical dtype can encode an order different from
+        # the order in which its values first appear.
+        values = pd.Series(pd.Categorical(
+            [0, "a", 1, "b"],
+            categories=["b", "a", 1, 0],
+            ordered=ordered,
+        ))
+        original = values.copy(deep=True)
+        ax = histplot(**{orient: values}, color="C0")
+
+        ticklabels = ax.get_xticklabels() if orient == "x" else ax.get_yticklabels()
+        assert [tick.get_text() for tick in ticklabels] == ["b", "a", "1", "0"]
+        pd.testing.assert_series_equal(values, original)
+
+    @pytest.mark.parametrize("orient", ["x", "y"])
+    def test_mixed_pandas_categorical_rejects_unused_category_collisions(self, orient):
+
+        # Labels from unused categories must remain distinguishable, too.
+        values = pd.Series(pd.Categorical(
+            [0, "a", 0],
+            categories=[0, "0", "a"],
+        ))
+        with pytest.raises(ValueError, match="changing distinct category"):
+            histplot(**{orient: values}, color="C0")
+
+    @pytest.mark.parametrize("orient", ["x", "y"])
+    def test_mixed_pandas_categorical_rejects_label_collisions(self, orient):
+
+        values = pd.Series(pd.Categorical([1, "1", "other"]))
+        with pytest.raises(ValueError, match="changing distinct category"):
+            histplot(**{orient: values}, color="C0")
+
+    def test_mixed_category_conversions_are_scoped_to_histograms(self):
+
+        values = [1, "a", 2, "b"]
+        plt.figure()
+        ax = histplot(x=values, color="C0")
+        assert [tick.get_text() for tick in ax.get_xticklabels()] == [
+            "1", "a", "2", "b",
+        ]
+
+        # All-numeric data must remain numeric, not string-categorical.
+        plt.figure()
+        ax = histplot(x=[1, 2, 3, 4], color="C0")
+        assert ax.xaxis.units is None
+
+
     def get_last_color(self, ax, element="bars", fill=True):
 
         if element == "bars":
@@ -2253,6 +2364,18 @@ class TestECDFPlotUnivariate(SharedAxesLevelTests):
 
 
 class TestDisPlot:
+
+    def test_mixed_numeric_text_histogram_facets(self):
+
+        df = pd.DataFrame({
+            "mixed": [0, "a", 1, "b"],
+            "facet": ["A", "A", "B", "B"],
+        })
+        g = displot(data=df, x="mixed", col="facet", kind="hist")
+        assert len(g.axes.flat) == 2
+        for ax in g.axes.flat:
+            labels = [tick.get_text() for tick in ax.get_xticklabels()]
+            assert labels == ["0", "a", "1", "b"]
 
     # TODO probably good to move these utility attributes/methods somewhere else
     @pytest.mark.parametrize(
