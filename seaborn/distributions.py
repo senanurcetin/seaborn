@@ -315,8 +315,17 @@ class _DistributionPlotter(VectorPlotter):
             common_norm = False
 
         all_data = self.plot_data.dropna()
+        weight_scale = None
         if common_norm and "weights" in all_data:
-            whole_weight = all_data["weights"].sum()
+            global_weights = all_data["weights"]
+            if (global_weights >= 0).all() and np.isfinite(global_weights).all():
+                # Avoid overflowing when summing very large finite weights.
+                weight_scale = global_weights.max()
+                whole_weight = (
+                    (global_weights / weight_scale).sum() if weight_scale else 0
+                )
+            else:
+                whole_weight = global_weights.sum()
         else:
             whole_weight = len(all_data)
 
@@ -330,7 +339,12 @@ class _DistributionPlotter(VectorPlotter):
             # Extract the weights for this subset of observations
             if "weights" in self.variables:
                 weights = sub_data["weights"]
-                part_weight = weights.sum()
+                if weight_scale is not None and weight_scale > 0:
+                    part_weight = (weights / weight_scale).sum()
+                elif common_norm:
+                    part_weight = weights.sum()
+                else:
+                    part_weight = len(sub_data)
             else:
                 weights = None
                 part_weight = len(sub_data)
@@ -338,11 +352,41 @@ class _DistributionPlotter(VectorPlotter):
             # Estimate the density of observations at this level
             variance = np.nan_to_num(observations.var())
             singular = len(observations) < 2 or math.isclose(variance, 0)
+
+            # A weighted dataset may be singular even when the unweighted
+            # observations vary. In particular, scipy's gaussian_kde cannot
+            # estimate a density from only one positive-weight observation.
+            # Preserve scipy's error handling for invalid negative weights.
+            if weights is not None and not singular and (weights >= 0).all():
+                positive = weights > 0
+                weighted_support_var = np.nan_to_num(observations[positive].var())
+                singular = math.isclose(weighted_support_var, 0)
+                if not singular:
+                    # scipy's weighted covariance is undefined when the
+                    # effective sample size rounds to one (for example,
+                    # when one weight dominates all the others).
+                    positive_weights = weights[positive].to_numpy(dtype=float)
+                    scaled_weights = positive_weights / positive_weights.max()
+                    normalized_weights = scaled_weights / scaled_weights.sum()
+                    singular = np.square(normalized_weights).sum() >= 1
+
+            # scipy normalizes the supplied weights internally; their raw
+            # sum can overflow even when all weights are finite. Multiplying
+            # positive weights by a constant does not change the fitted KDE.
+            fit_weights = weights
+            if (
+                weights is not None
+                and not singular
+                and (weights >= 0).all()
+                and np.isfinite(weights).all()
+            ):
+                fit_weights = weights / weights.max()
+
             try:
                 if not singular:
                     # Convoluted approach needed because numerical failures
                     # can manifest in a few different ways.
-                    density, support = estimator(observations, weights=weights)
+                    density, support = estimator(observations, weights=fit_weights)
             except np.linalg.LinAlgError:
                 singular = True
 
@@ -435,8 +479,15 @@ class _DistributionPlotter(VectorPlotter):
         else:
             common_norm = False
 
+        weight_scale = None
         if common_norm and all_weights is not None:
-            whole_weight = all_weights.sum()
+            if (all_weights >= 0).all() and np.isfinite(all_weights).all():
+                # Keep the weights on a common scale to avoid overflow when
+                # computing the relative contribution of each hue group.
+                weight_scale = all_weights.max()
+                whole_weight = (all_weights / weight_scale).sum() if weight_scale else 0
+            else:
+                whole_weight = all_weights.sum()
         else:
             whole_weight = len(all_data)
 
@@ -462,7 +513,22 @@ class _DistributionPlotter(VectorPlotter):
 
             if "weights" in self.variables:
                 sub_data["weight"] = sub_data.pop("weights")
-                part_weight = sub_data["weight"].sum()
+                weights = sub_data["weight"]
+                if weight_scale is not None and weight_scale > 0:
+                    part_weight = (weights / weight_scale).sum()
+                else:
+                    part_weight = weights.sum()
+
+                # A normalized histogram is invariant to multiplication of
+                # all weights by a constant. Rescale before np.histogram so
+                # its bin totals cannot overflow on large finite inputs.
+                if estimator.stat in {
+                    "density", "probability", "proportion", "percent"
+                }:
+                    if (weights >= 0).all() and np.isfinite(weights).all():
+                        scale = weights.max()
+                        if scale > 0:
+                            sub_data["weight"] = weights / scale
             else:
                 part_weight = len(sub_data)
 
@@ -500,7 +566,7 @@ class _DistributionPlotter(VectorPlotter):
 
             # Apply scaling to normalize across groups
             if common_norm:
-                hist *= part_weight / whole_weight
+                hist *= (part_weight / whole_weight) if whole_weight else 0
 
             # Store the finalized histogram data for future plotting
             histograms[key] = hist
