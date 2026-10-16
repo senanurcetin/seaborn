@@ -556,6 +556,9 @@ weights : vector or key in `data`
 {params.rel.size_norm}
 {params.rel.dashes}
 {params.rel.markers}
+    For `lineplot`, specifying `markers=True` has an effect only when a
+    `style` variable is assigned. To show markers without using `style`,
+    pass the Matplotlib keyword argument `marker="o"` instead.
 {params.rel.style_order}
 {params.rel.estimator}
 {params.stat.errorbar}
@@ -954,6 +957,9 @@ row_order, col_order : lists of strings
 {params.rel.style_order}
 {params.rel.dashes}
 {params.rel.markers}
+    For line plots (``kind="line"``), `markers=True` requires a `style`
+    variable. To add markers without `style`, use the Matplotlib keyword
+    argument `marker="o"` instead.
 {params.rel.legend}
 kind : string
     Kind of plot to draw, corresponding to a seaborn relational plot.
