@@ -400,6 +400,98 @@ class TestSizeMapping:
         with pytest.raises(ValueError):
             SizeMapping(p, norm="bad_norm")
 
+    def test_binary_numeric_size_mapping(self):
+
+        df = pd.DataFrame(dict(x=[0, 1, 2, 3], size=[0, 0, 1, 1]))
+        p = VectorPlotter(data=df, variables=dict(x="x", size="size"))
+
+        # The general variable classifier treats binary numeric data as
+        # categorical, but size should still increase with numeric value.
+        assert p.var_types["size"] == "categorical"
+        m = SizeMapping(p, sizes=(10, 200))
+        assert m.map_type == "numeric"
+        assert m.lookup_table == {0: 10, 1: 200}
+
+        # Explicit categorical semantics should continue to work.
+        m = SizeMapping(p, sizes=[200, 10])
+        assert m.map_type == "categorical"
+        assert m.lookup_table == {0: 200, 1: 10}
+
+        m = SizeMapping(p, sizes=(10, 200), order=[1, 0])
+        assert m.map_type == "categorical"
+        assert m.lookup_table == {1: 200, 0: 10}
+
+    def test_binary_numeric_size_mapping_preserves_explicit_sizes(self):
+
+        df = pd.DataFrame(dict(x=[0, 1, 2, 3], size=[0, 0, 1, 1]))
+        p = VectorPlotter(data=df, variables=dict(x="x", size="size"))
+
+        m = SizeMapping(p, sizes={0: 200, 1: 10})
+        assert m.map_type == "categorical"
+        assert m.lookup_table == {0: 200, 1: 10}
+
+    def test_nonbinary_numeric_size_mapping(self):
+
+        df = pd.DataFrame(dict(x=[0, 1, 2, 3], size=[0, 0, 2, 2]))
+        p = VectorPlotter(data=df, variables=dict(x="x", size="size"))
+
+        assert p.var_types["size"] == "numeric"
+        m = SizeMapping(p, sizes=(10, 200))
+        assert m.map_type == "numeric"
+        assert m.lookup_table == {0: 10, 2: 200}
+
+    @pytest.mark.parametrize(
+        "values",
+        [
+            [0.0, 0.0, 1.0, 1.0],
+            [np.nan, 0.0, 1.0, 1.0],
+            pd.Series([0, 1, None, 1], dtype="Int64"),
+        ],
+        ids=["float_binary", "missing_float", "nullable_integer"],
+    )
+    def test_binary_numeric_size_mapping_with_missing_data(self, values):
+
+        df = pd.DataFrame(dict(x=[0, 1, 2, 3], size=values))
+        p = VectorPlotter(data=df, variables=dict(x="x", size="size"))
+
+        assert p.var_types["size"] == "categorical"
+        m = SizeMapping(p, sizes=(10, 200))
+
+        assert m.map_type == "numeric"
+        assert m.lookup_table == {0: 10, 1: 200}
+
+    @pytest.mark.parametrize(
+        "values",
+        [
+            [0, 0, 1, 1],
+            [0, 0, 1, None],
+        ],
+        ids=["integers", "missing"],
+    )
+    def test_binary_numeric_size_mapping_object_dtype(self, values):
+
+        df = pd.DataFrame({
+            "x": [0, 1, 2, 3],
+            "size": pd.Series(values, dtype=object),
+        })
+        p = VectorPlotter(data=df, variables=dict(x="x", size="size"))
+
+        assert p.var_types["size"] == "categorical"
+        m = SizeMapping(p, sizes=(10, 200))
+        assert m.map_type == "numeric"
+        assert m.lookup_table == {0: 10, 1: 200}
+
+    def test_binary_boolean_and_categorical_sizes(self):
+
+        for values in [
+            [False, False, True, True],
+            pd.Categorical([0, 0, 1, 1]),
+        ]:
+            df = pd.DataFrame(dict(x=[0, 1, 2, 3], size=values))
+            p = VectorPlotter(data=df, variables=dict(x="x", size="size"))
+            m = SizeMapping(p, sizes=(10, 200))
+            assert m.map_type == "categorical"
+
     def test_map_size_categorical(self, long_df):
 
         p = VectorPlotter(
