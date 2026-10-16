@@ -315,9 +315,25 @@ class SizeMapping(SemanticMapping):
 
         if data.notna().any():
 
-            map_type = self.infer_map_type(
-                norm, sizes, plotter.var_types["size"]
+            var_type = plotter.var_types["size"]
+            # Binary numeric variables are inferred as categorical, even
+            # when their values are stored in an object-typed Series. Keep
+            # actual text labels, booleans, and explicit categorical sizing
+            # on the categorical path.
+            numeric_values = pd.api.types.is_numeric_dtype(data) or (
+                pd.api.types.is_object_dtype(data)
+                and pd.api.types.infer_dtype(data, skipna=True)
+                in {"integer", "floating", "mixed-integer-float"}
             )
+            if (
+                var_type == "categorical"
+                and numeric_values
+                and not pd.api.types.is_bool_dtype(data)
+                and order is None
+            ):
+                var_type = "numeric"
+
+            map_type = self.infer_map_type(norm, sizes, var_type)
 
             # --- Option 1: numeric mapping
 

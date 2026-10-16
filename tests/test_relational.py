@@ -2,6 +2,7 @@ from itertools import product
 import warnings
 
 import numpy as np
+import pandas as pd
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 from matplotlib.colors import same_color, to_rgba
@@ -462,6 +463,24 @@ class TestRelationalPlotter(Helpers):
 
         with pytest.raises(ValueError):
             g = relplot(data=long_df, x="x", y="y", kind="not_a_kind")
+
+    def test_relplot_facet_binary_numeric_size_scale(self):
+
+        # gh-3834: the same numeric size scale must apply in every facet.
+        df = pd.DataFrame({
+            "x": [0, 1, 0, 1, 0, 1, 0, 1],
+            "y": [1, 2, 3, 4, 1, 2, 3, 4],
+            "size": [0, 0, 1, 1, 0, 0, 1, 1],
+            "group": ["a"] * 4 + ["b"] * 4,
+        })
+        g = relplot(
+            data=df, x="x", y="y", size="size", col="group",
+            sizes=(10, 200), kind="scatter",
+        )
+        for ax in g.axes.flat:
+            np.testing.assert_allclose(
+                ax.collections[-1].get_sizes(), [10, 10, 200, 200]
+            )
 
     def test_relplot_complex(self, long_df):
 
@@ -1348,6 +1367,51 @@ class TestLinePlotter(SharedAxesLevelTests, Helpers):
 class TestScatterPlotter(SharedAxesLevelTests, Helpers):
 
     func = staticmethod(scatterplot)
+
+    def test_binary_numeric_size_scale(self):
+
+        # Regression for gh-3834: a binary numeric variable must not be
+        # mapped in descending categorical order.
+        df = pd.DataFrame({
+            "x": [0, 1, 2, 3],
+            "y": [1, 2, 3, 4],
+            "size": [0, 0, 1, 1],
+        })
+        ax = scatterplot(data=df, x="x", y="y", size="size", sizes=(10, 200))
+        np.testing.assert_allclose(ax.collections[-1].get_sizes(), [10, 10, 200, 200])
+
+
+    @pytest.mark.parametrize(
+        "size_values, expected_sizes",
+        [
+            ([0.0, 0.0, 1.0, 1.0], [10, 10, 200, 200]),
+            ([np.nan, 0.0, 1.0, 1.0], [10, 200, 200]),
+            ([None, 0, 1, 1], [10, 200, 200]),
+        ],
+        ids=["float_binary", "missing_float", "missing_none"],
+    )
+    def test_binary_numeric_size_scale_with_missing_data(
+        self, size_values, expected_sizes
+    ):
+
+        df = pd.DataFrame({
+            "x": [0, 1, 2, 3],
+            "y": [1, 2, 3, 4],
+            "size": size_values,
+        })
+        ax = scatterplot(data=df, x="x", y="y", size="size", sizes=(10, 200))
+        np.testing.assert_allclose(ax.collections[-1].get_sizes(), expected_sizes)
+
+    def test_three_level_numeric_size_scale(self):
+
+        # Guard the unaffected three-level case from the original bug report.
+        df = pd.DataFrame({
+            "x": [0, 1, 2, 3],
+            "y": [1, 2, 3, 4],
+            "size": [0, 0, 1, 2],
+        })
+        ax = scatterplot(data=df, x="x", y="y", size="size", sizes=(10, 200))
+        np.testing.assert_allclose(ax.collections[-1].get_sizes(), [10, 10, 105, 200])
 
     def get_last_color(self, ax):
 
