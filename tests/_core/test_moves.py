@@ -301,6 +301,37 @@ class TestStack(MoveFixtures):
         assert_array_equal(res["y"], [2, np.nan, 3])
         assert_array_equal(res["baseline"], [0, np.nan, 2])
 
+
+    @pytest.mark.parametrize("baseline", [0, 10, -5])
+    @pytest.mark.parametrize("orient", ["x", "y"])
+    def test_nonzero_baseline(self, toy_df, baseline, orient):
+
+        df = toy_df.assign(
+            y=toy_df["y"] + baseline,
+            baseline=baseline,
+        )
+        if orient == "y":
+            df = df.rename(columns={"x": "y", "y": "x"})
+
+        res = Stack()(df, GroupBy(["grp"]), orient, {})
+
+        other = {"x": "y", "y": "x"}[orient]
+        assert_array_equal(res[other], [baseline + 1, baseline + 3, baseline + 3])
+        assert_array_equal(res["baseline"], [baseline, baseline + 1, baseline])
+        assert_array_equal(res[other] - res["baseline"], [1, 2, 3])
+
+    def test_nonzero_baseline_with_missing_data(self):
+
+        df = pd.DataFrame({
+            "x": [0, 0, 0],
+            "y": [12, np.nan, 11],
+            "baseline": [10, 10, 10],
+        })
+        res = Stack()(df, None, "x", {})
+
+        assert_array_equal(res["y"], [12, np.nan, 13])
+        assert_array_equal(res["baseline"], [10, np.nan, 12])
+
     def test_baseline_homogeneity_check(self, toy_df):
 
         toy_df["baseline"] = [0, 1, 2]
