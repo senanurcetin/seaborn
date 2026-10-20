@@ -1,0 +1,33 @@
+name: Verify Seaborn 4022 stacked bar baselines
+on:
+  push:
+    branches:
+      - verify/4022-stack-20261021
+permissions:
+  contents: read
+jobs:
+  stack:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.10', '3.13']
+    env:
+      MPLBACKEND: Agg
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install seaborn with test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[stats]" pytest pytest-cov pytest-xdist ruff
+      - name: Test Stack and bar rendering
+        run: python -m pytest -q tests/_core tests/_marks --disable-warnings --maxfail=1
+      - name: Ruff changed source and tests
+        if: always()
+        run: python -m ruff check seaborn/_core/moves.py tests/_core/test_moves.py tests/_marks/test_bar.py
