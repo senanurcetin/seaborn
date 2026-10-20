@@ -8,6 +8,7 @@ from numpy.testing import assert_array_equal
 
 from seaborn._core.plot import Plot
 from seaborn._marks.bar import Bar, Bars
+from seaborn._core.moves import Stack
 
 
 class TestBar:
@@ -97,6 +98,27 @@ class TestBar:
             assert bar.get_facecolor() == to_rgba(colors[i], mark.alpha)
             assert bar.get_edgecolor() == to_rgba(colors[i], 1)
         assert ax.patches[0].get_linewidth() < ax.patches[1].get_linewidth()
+
+    @pytest.mark.parametrize("baseline", [10, -5])
+    @pytest.mark.parametrize("orient", ["v", "h"])
+    def test_stacked_nonzero_baseline(self, baseline, orient):
+
+        values = [baseline + 5, baseline + 15]
+        variables = (
+            {"x": ["a", "a"], "y": values, "color": ["g1", "g2"]}
+            if orient == "v"
+            else {"x": values, "y": ["a", "a"], "color": ["g1", "g2"]}
+        )
+        p = Plot(**variables).add(Bar(baseline=baseline), Stack(), orient=orient).plot()
+        bars = p._figure.axes[0].patches
+
+        assert len(bars) == 2
+        bounds = (
+            [(bar.get_y(), bar.get_height()) for bar in bars]
+            if orient == "v"
+            else [(bar.get_x(), bar.get_width()) for bar in bars]
+        )
+        assert sorted(bounds) == [(baseline, 5), (baseline + 5, 15)]
 
     def test_zero_height_skipped(self):
 
