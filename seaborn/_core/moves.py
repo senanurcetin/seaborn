@@ -175,7 +175,7 @@ class Stack(Move):
         stacked_lengths = (df[other] - df["baseline"]).dropna().cumsum()
         offsets = stacked_lengths.shift(1).fillna(0)
 
-        df[other] = stacked_lengths
+        df[other] = df["baseline"] + stacked_lengths
         df["baseline"] = df["baseline"] + offsets
 
         return df
