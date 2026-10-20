@@ -1,0 +1,29 @@
+name: Verify Seaborn PR 4010 regressions
+on:
+  push:
+    branches:
+      - verify/4010-regressions-20261021
+permissions:
+  contents: read
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      MPLBACKEND: Agg
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[stats]" pytest pytest-cov pytest-xdist ruff
+      - name: Test affected modules
+        run: python -m pytest -q tests/test_base.py tests/test_relational.py --disable-warnings --maxfail=1
+      - name: Ruff touched files
+        if: always()
+        run: python -m ruff check seaborn/_base.py tests/test_base.py tests/test_relational.py
