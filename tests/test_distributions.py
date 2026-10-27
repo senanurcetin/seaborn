@@ -470,6 +470,55 @@ class TestKDEPlotUnivariate(SharedAxesLevelTests):
         with pytest.raises(ValueError):
             kdeplot(x=np.arange(5), weights=[0, -1, 1, 0, 0])
 
+    @pytest.mark.parametrize(
+        "weights",
+        [
+            [1., 1., 1., 1., 1., 1.],
+            [1e308] * 6,
+            [0., 1e308, 1e308, 0., 1e308, 1e308],
+            [1e308, None, 1e308, 1e308, None, 1e308],
+        ],
+        ids=["ordinary", "very_large", "sparse", "missing"],
+    )
+    @pytest.mark.parametrize("with_hue", [False, True])
+    @pytest.mark.parametrize("method", ["kde", "hist_density", "hist_probability"])
+    def test_numeric_object_weights_match_numeric_dtype(
+        self, weights, with_hue, method,
+    ):
+        # Numeric weights stored as objects have always been accepted.
+        # Regression: np.isfinite(Series[object]) raises TypeError.
+        fig, axes = plt.subplots(1, 2)
+        outputs = []
+        for dtype, ax in zip(["object", "float64"], axes):
+            data = pd.DataFrame({
+                "x": np.arange(6),
+                "weight": pd.Series(weights, dtype=dtype),
+                "group": ["a"] * 3 + ["b"] * 3,
+            })
+            kws = {"data": data, "x": "x", "weights": "weight", "ax": ax}
+            if with_hue:
+                kws["hue"] = "group"
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", RuntimeWarning)
+                if method == "kde":
+                    kdeplot(**kws)
+                else:
+                    histplot(
+                        **kws, kde=True, bins=3, stat=method.split("_")[1]
+                    )
+            outputs.append((
+                [line.get_xydata() for line in ax.lines],
+                [patch.get_height() for patch in ax.patches],
+            ))
+        (object_lines, object_heights), (numeric_lines, numeric_heights) = outputs
+        assert len(object_lines) == len(numeric_lines)
+        assert len(object_heights) == len(numeric_heights)
+        for left, right in zip(object_lines, numeric_lines):
+            np.testing.assert_allclose(left, right, rtol=1e-8, atol=1e-12)
+        np.testing.assert_allclose(
+            object_heights, numeric_heights, rtol=1e-8, atol=1e-12
+        )
+
     def test_singular_data(self):
 
         with pytest.warns(UserWarning):
