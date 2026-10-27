@@ -267,6 +267,8 @@ class Nominal(Scale):
         stringify = np.vectorize(format, otypes=["object"])
 
         units_seed = categorical_order(data, new.order)
+        # Keep the inferred levels available to moves that run on each layer.
+        new._data_order = units_seed
 
         # TODO move to Nominal._get_scale?
         # TODO this needs some more complicated rethinking about how to pass
