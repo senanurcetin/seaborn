@@ -96,6 +96,16 @@ _param_docs = DocstringComponents.from_nested_components(
 # ==================================================================================== #
 
 
+def _weights_are_finite_nonnegative(weights):
+    """Accept numeric object and nullable columns in finite-weight checks."""
+    if not (weights >= 0).all():
+        return False
+    values = weights.to_numpy()
+    if values.dtype == object:
+        values = weights.to_numpy(dtype=float, na_value=np.nan)
+    return bool(np.isfinite(values).all())
+
+
 class _DistributionPlotter(VectorPlotter):
 
     wide_structure = {"x": "@values", "hue": "@columns"}
@@ -318,7 +328,7 @@ class _DistributionPlotter(VectorPlotter):
         weight_scale = None
         if common_norm and "weights" in all_data:
             global_weights = all_data["weights"]
-            if (global_weights >= 0).all() and np.isfinite(global_weights).all():
+            if _weights_are_finite_nonnegative(global_weights):
                 # Avoid overflowing when summing very large finite weights.
                 weight_scale = global_weights.max()
                 whole_weight = (
@@ -377,8 +387,7 @@ class _DistributionPlotter(VectorPlotter):
             if (
                 weights is not None
                 and not singular
-                and (weights >= 0).all()
-                and np.isfinite(weights).all()
+                and _weights_are_finite_nonnegative(weights)
             ):
                 fit_weights = weights / weights.max()
 
@@ -481,7 +490,7 @@ class _DistributionPlotter(VectorPlotter):
 
         weight_scale = None
         if common_norm and all_weights is not None:
-            if (all_weights >= 0).all() and np.isfinite(all_weights).all():
+            if _weights_are_finite_nonnegative(all_weights):
                 # Keep the weights on a common scale to avoid overflow when
                 # computing the relative contribution of each hue group.
                 weight_scale = all_weights.max()
@@ -525,7 +534,7 @@ class _DistributionPlotter(VectorPlotter):
                 if estimator.stat in {
                     "density", "probability", "proportion", "percent"
                 }:
-                    if (weights >= 0).all() and np.isfinite(weights).all():
+                    if _weights_are_finite_nonnegative(weights):
                         scale = weights.max()
                         if scale > 0:
                             sub_data["weight"] = weights / scale
