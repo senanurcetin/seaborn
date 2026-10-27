@@ -332,6 +332,31 @@ class TestStack(MoveFixtures):
         assert_array_equal(res["y"], [12, np.nan, 13])
         assert_array_equal(res["baseline"], [10, np.nan, 12])
 
+    @pytest.mark.parametrize("orient", ["x", "y"])
+    @pytest.mark.parametrize("with_missing", [False, True])
+    def test_faceted_nonzero_baselines(self, orient, with_missing):
+
+        # Each facet may have a different constant baseline. The stack
+        # must reset between facets even when the baseline is negative.
+        df = pd.DataFrame({
+            "x": [0, 0, 0, 0],
+            "y": [12., 11., -3., -4.],
+            "baseline": [10., 10., -5., -5.],
+            "col": ["left", "left", "right", "right"],
+        })
+        if with_missing:
+            df.loc[1, "y"] = np.nan
+        if orient == "y":
+            df = df.rename(columns={"x": "y", "y": "x"})
+
+        result = Stack()(df, None, orient, {})
+        other = {"x": "y", "y": "x"}[orient]
+        expected_endpoints = [12, np.nan if with_missing else 13, -3, -2]
+        expected_baselines = [10, np.nan if with_missing else 12, -5, -3]
+
+        assert_array_equal(result[other], expected_endpoints)
+        assert_array_equal(result["baseline"], expected_baselines)
+
     def test_baseline_homogeneity_check(self, toy_df):
 
         toy_df["baseline"] = [0, 1, 2]
