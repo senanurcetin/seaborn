@@ -1433,7 +1433,11 @@ class Plotter:
                 # sorted unique numbers will correctly reconstruct intended order
                 # TODO This is tricky, make sure we add some tests for this
                 if var not in "xy" and var in scales:
-                    return getattr(scales[var], "order", None)
+                    scale = scales[var]
+                    order = getattr(scale, "order", None)
+                    if order is None:
+                        order = getattr(scale, "_data_order", None)
+                    return order
 
             if orient in df:
                 width = pd.Series(index=df.index, dtype=float)
